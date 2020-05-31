@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-## (! /usr/bin/python)
 import click
 import requests
-from cortex.reader import Reader
+from pathlib import Path
+from secrets import token_hex
+from cortex.reader import Reader, serialize
 
 ERROR_PREFIX = "ERROR: "
 TIMEOUT_PREFIX = "TIMEOUT: "
@@ -21,9 +22,14 @@ def validate_attr(attr, default_val, path):
     return True
 
 
-def send_request(url, data, timeout = 10):
+def send_request(url, data, filename="", headers=None, timeout=10):
     try:
-        r = requests.post(url, data=data, timeout=timeout)
+        if filename != "":
+            print("we are here", filename)
+            files = {'file': (str(filename), open(filename, 'rb'))}
+            r = requests.post(url, data=data, files=files, timeout=timeout)
+        else:
+            r = requests.post(url, data=data, headers=headers, timeout=timeout)
     except requests.exceptions.Timeout:
         print(TIMEOUT_PREFIX, "Couldn't upload the data. Please, try again latter.")
         return None
@@ -34,44 +40,74 @@ def send_request(url, data, timeout = 10):
         return None
 
     if r.status_code != requests.codes.ok:
-        print(ERROR_PREFIX, "Couldn't upload the user. Response status:", r.status_code)
+        print(ERROR_PREFIX, "Couldn't upload the data. Response status:", r.status_code)
         return None
     return r
 
 
 def upload_user(base_url, user):
     url = "{}/new_user".format(base_url)
-    r = send_request(url,user)
+    r = send_request(url, user)
     if r:
         try:
             config = r.json()
+            if "parsers" in config:
+                return config["parsers"]
+            if "error" in config:
+                print(config["error"])
         except ValueError:  # json parsing error
-            config = r.text
-        print("resp:", config)
+            print("Couldn't parse json. Print response as text:", r.text)
+    return None
 
 
-def upload_snapshot(base_url, user_id, snapshot):
-    url = "{}/snapshot/{}".format(base_url, user_id)
-    prepared_snapshot = {}
-    try:
-        prepared_snapshot["datetime"] = snapshot.datetime
-    except AttributeError:
-        pass
+def upload_snapshot(base_url, user_id, snapshot, snapshot_id, parsers=None):
+    url = "{}/snapshot/{}/{}".format(base_url, user_id, snapshot_id)
+    print("snapshot fields list:", len(snapshot.ListFields()))
 
-    r = send_request(url, prepared_snapshot)
+    acceptable_fields = []
+    if parsers is not None:
+        for parser in parsers:
+            try:
+                if snapshot.HasField(parser):
+                    acceptable_fields.append(parser)
+            except ValueError:
+                # redundant parser
+                pass
+
+    print("accept", acceptable_fields)
+
+    for desc, _ in snapshot.ListFields():
+        print("desc", desc.name)
+
+    snapfiles_path = Path("/tmp/snapfiles/")
+    snapfiles_path.mkdir(parents=True, exist_ok=True)
+    snapfile_path = snapfiles_path / ("snap_" + token_hex(5) + ".bytes")
+    with open(snapfile_path, "wb") as f:
+        f.write(serialize(snapshot))
+
+    r = send_request(url, data=None, filename=snapfile_path)  # prepared_snapshot
+    # r = send_request(url, snapshot.SerializeToString())  # too big
+
     if r:
         try:
-            config = r.json()
+            resp = r.json()
+            if "error" in resp:
+                print(ERROR_PREFIX, resp["error"])
         except ValueError:  # json parsing error
-            config = r.text
-        print("resp:", config)
+            pass
+            # resp = r.text
+            # print("Couldn't parse json. Print response as text:", resp)
 
 
-@click.command()
+@cli.command(name="upload-sample")
 @click.option('--host', '-h', default='127.0.0.1', help='Host')
 @click.option('--port', '-p', default=8000, help='Port')
 @click.argument('path', type=click.Path(exists=True))
-def upload_sample(host, port, path):
+def cli_upload_sample(host, port, path):
+    upload_sample(host=host, port=port, path=path)
+
+
+def upload_sample(host='127.0.0.1', port=8000, path=""):
     """
     Upload a sample by providing host, port and path to gz file.
     Gz file is expected to include user data and a list of snapshots serialized with google protobuf.
@@ -114,15 +150,18 @@ def upload_sample(host, port, path):
         # http:// is required
         base_url = "" if "http" in host else "http://"
         base_url += "{}:{}".format(host, port)
-        upload_user(base_url, new_user)
+        parsers = upload_user(base_url, new_user)
 
-        for snapshot in reader:
-            print(snapshot.datetime, snapshot.color_image.width, snapshot.color_image.height)
-            upload_snapshot(base_url, user_id, snapshot)
-            break
+        if parsers is not None:  # if no error (on error, parsers = None)
+            snapshot_id = 1
+            for snapshot in reader:
+                print(snapshot.datetime, snapshot.color_image.width, snapshot.color_image.height)
+                upload_snapshot(base_url, user_id, snapshot, snapshot_id, parsers)
+                snapshot_id += 1
+                break
 
 
-cli.add_command(upload_sample)
+# cli.add_command(upload_sample)
 
 if __name__ == '__main__':
     cli()

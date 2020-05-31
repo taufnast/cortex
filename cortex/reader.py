@@ -3,6 +3,23 @@ import gzip
 import os
 import struct
 from datetime import datetime
+# from google.protobuf.json_format import MessageToDict, MessageToJson
+
+
+def serialize(snapshot_ob):
+    new_snap = snapshot_ob.SerializeToString()
+    return new_snap
+
+
+def create_empty_snapshot():
+    snap = cortex_pb2.Snapshot()
+    return snap
+
+def parse_from(serialized_snapshot):
+    snap = create_empty_snapshot()
+    snap.ParseFromString(serialized_snapshot)
+
+    return snap
 
 
 class Reader:
@@ -28,24 +45,7 @@ class Reader:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.__file_object:
             self.__file_object.close()
-    #
-    # from contextlib import suppress
-    #
-    # class ContextManager:
-    #     def __init__(self, generator):
-    #         self.generator = generator
-    #
-    #     def __enter__(self):
-    #         self.execution = self.generator()
-    #         return next(self.execution)
-    #
-    #     def __exit__(self, exception, error, traceback):
-    #         # TODO: try to replace 'suppress()' function
-    #         with suppress(StopIteration):
-    #             if exception:
-    #                 self.execution.throw(exception, error, traceback)
-    #             else:
-    #                 next(self.execution)
+
     def __iter__(self):
         return self
 
@@ -76,17 +76,14 @@ class Reader:
         snapshot_msg = self.read_msg()
         # retrieve snapshot
         self.snapshot.ParseFromString(snapshot_msg)
-        #self.prepare_attr()
-
-    def prepare_attr(self):
-        if self.snapshot is not None:
-            # new class needed for Snapshot ?
-            return self.snapshot.color_image
 
     def read_user(self):
         user_msg = self.read_msg()
         # retrieve user
         self.user.ParseFromString(user_msg)
+        # print("here", MessageToJson(self.user))
+        # print("fields list:", self.user.ListFields())
+        # print("fields num:", len(self.user.ListFields()))
 
     @property
     def user_id(self):
