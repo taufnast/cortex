@@ -1,0 +1,7 @@
+parsers:
+    color_image:
+        path: /tmp/images/color
+    depth_image:
+        path: /tmp/images/depth
+    feelings:
+    pose:
