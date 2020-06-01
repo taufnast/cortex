@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-
-import click
 import requests
 from pathlib import Path
 from secrets import token_hex
@@ -8,11 +5,6 @@ from cortex.reader import Reader, serialize
 
 ERROR_PREFIX = "ERROR: "
 TIMEOUT_PREFIX = "TIMEOUT: "
-
-
-@click.group()
-def cli():
-    pass
 
 
 def validate_attr(attr, default_val, path):
@@ -25,7 +17,6 @@ def validate_attr(attr, default_val, path):
 def send_request(url, data, filename="", headers=None, timeout=10):
     try:
         if filename != "":
-            print("we are here", filename)
             files = {'file': (str(filename), open(filename, 'rb'))}
             r = requests.post(url, data=data, files=files, timeout=timeout)
         else:
@@ -36,7 +27,7 @@ def send_request(url, data, filename="", headers=None, timeout=10):
     except (requests.exceptions.RequestException, ConnectionError) as e:
         # catastrophic failure
         print(ERROR_PREFIX, "Server is currently unavailable.")
-        print(e)
+        # print(e)
         return None
 
     if r.status_code != requests.codes.ok:
@@ -54,17 +45,17 @@ def upload_user(base_url, user):
             if "parsers" in config:
                 return config["parsers"]
             if "error" in config:
-                print(config["error"])
+                print(ERROR_PREFIX, config["error"])
         except ValueError:  # json parsing error
-            print("Couldn't parse json. Print response as text:", r.text)
+            print(ERROR_PREFIX, "couldn't parse json. Print response as text:", r.text)
     return None
 
 
 def upload_snapshot(base_url, user_id, snapshot, snapshot_id, parsers=None):
     url = "{}/snapshot/{}/{}".format(base_url, user_id, snapshot_id)
-    print("snapshot fields list:", len(snapshot.ListFields()))
+    # print("snapshot fields list:", len(snapshot.ListFields()))
 
-    acceptable_fields = []
+    acceptable_fields = []  # snapshot fields that can be parsed
     if parsers is not None:
         for parser in parsers:
             try:
@@ -74,19 +65,19 @@ def upload_snapshot(base_url, user_id, snapshot, snapshot_id, parsers=None):
                 # redundant parser
                 pass
 
-    print("accept", acceptable_fields)
+    # print("accept", acceptable_fields)
 
-    for desc, _ in snapshot.ListFields():
-        print("desc", desc.name)
-
+    # send a snapshot as file
+    # attempt to send serialized proto object as is resulted in error
+    # r = send_request(url, snapshot.SerializeToString())  # too big
+    # create tmp file
     snapfiles_path = Path("/tmp/snapfiles/")
     snapfiles_path.mkdir(parents=True, exist_ok=True)
     snapfile_path = snapfiles_path / ("snap_" + token_hex(5) + ".bytes")
     with open(snapfile_path, "wb") as f:
         f.write(serialize(snapshot))
-
-    r = send_request(url, data=None, filename=snapfile_path)  # prepared_snapshot
-    # r = send_request(url, snapshot.SerializeToString())  # too big
+    # send file to server
+    r = send_request(url, data=None, filename=snapfile_path)
 
     if r:
         try:
@@ -99,25 +90,19 @@ def upload_snapshot(base_url, user_id, snapshot, snapshot_id, parsers=None):
             # print("Couldn't parse json. Print response as text:", resp)
 
 
-@cli.command(name="upload-sample")
-@click.option('--host', '-h', default='127.0.0.1', help='Host')
-@click.option('--port', '-p', default=8000, help='Port')
-@click.argument('path', type=click.Path(exists=True))
-def cli_upload_sample(host, port, path):
-    upload_sample(host=host, port=port, path=path)
-
-
 def upload_sample(host='127.0.0.1', port=8000, path=""):
     """
     Upload a sample by providing host, port and path to gz file.
     Gz file is expected to include user data and a list of snapshots serialized with google protobuf.
     For more info please see cortes.proto file.
+
+    :param host:
+    :param port:
+    :param path: path to gz data file
+    :return: void
     """
     with Reader(path) as reader:
-        # reader = Reader(path)
         new_user = {}
-        # print(len(reader.__dict__["user"]))
-        print(reader.__dict__["user"])
         user_id = reader.user_id
         if not validate_attr(user_id, -1, path):
             return
@@ -143,11 +128,6 @@ def upload_sample(host='127.0.0.1', port=8000, path=""):
             return
         new_user["gender"] = gender
 
-        print(reader.user_id)
-        print(reader.username)
-        print(reader.gender)
-        print(reader.birthday)
-        # http:// is required
         base_url = "" if "http" in host else "http://"
         base_url += "{}:{}".format(host, port)
         parsers = upload_user(base_url, new_user)
@@ -155,15 +135,6 @@ def upload_sample(host='127.0.0.1', port=8000, path=""):
         if parsers is not None:  # if no error (on error, parsers = None)
             snapshot_id = 1
             for snapshot in reader:
-                print(snapshot.datetime, snapshot.color_image.width, snapshot.color_image.height)
+                # print(snapshot.datetime, snapshot.color_image.width, snapshot.color_image.height)
                 upload_snapshot(base_url, user_id, snapshot, snapshot_id, parsers)
                 snapshot_id += 1
-                break
-
-
-# cli.add_command(upload_sample)
-
-if __name__ == '__main__':
-    cli()
-
-    # upload_sample(host='127.0.0.1', port=8000, path='/home/nast/univer/advanced_systems_design/sample.mind.gz')

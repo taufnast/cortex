@@ -15,6 +15,7 @@ def create_empty_snapshot():
     snap = cortex_pb2.Snapshot()
     return snap
 
+
 def parse_from(serialized_snapshot):
     snap = create_empty_snapshot()
     snap.ParseFromString(serialized_snapshot)
@@ -35,7 +36,6 @@ class Reader:
         self.snapshot = cortex_pb2.Snapshot()
 
     def __del__(self):
-        # TODO: look for better solution
         if self.__file_object:
             self.__file_object.close()
 
@@ -68,7 +68,6 @@ class Reader:
 
     def read_msg(self):
         msg_len, = struct.unpack("I", self.read_in_chunks(4))
-        print("len:", msg_len)
         msg = self.read_in_chunks(msg_len)
         return msg
 
@@ -83,7 +82,6 @@ class Reader:
         self.user.ParseFromString(user_msg)
         # print("here", MessageToJson(self.user))
         # print("fields list:", self.user.ListFields())
-        # print("fields num:", len(self.user.ListFields()))
 
     @property
     def user_id(self):
