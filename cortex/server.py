@@ -5,8 +5,9 @@ import json
 import copy
 from flask import Flask
 from flask import request
-from cortex.msgbrokers.msgbroker import find_msg_broker
-from cortex.reader import parse_from, create_empty_snapshot
+from pika import BasicProperties
+from cortex.msgbrokers import find_msg_broker
+from cortex.reader import parse_from
 from google.protobuf.json_format import MessageToDict, MessageToJson, ParseDict
 from pathlib import Path
 from secrets import token_hex
@@ -19,17 +20,6 @@ def get_parsers():
         if "parsers" in data:
             return data["parsers"]
     return {}
-
-
-def traverse(dic, field):
-    try:
-        for desc, val in field.ListFields():
-            # print("inner desc", desc.name)
-            dic[desc.name] = traverse(dic.get(desc.name, {}), val)
-    except AttributeError:
-        # print("I'm not iterable!", field)
-        print("base type", type(field))
-        return field
 
 
 def save_data(parsers, snapshot):
@@ -59,28 +49,22 @@ def snapshot_to_dict(parsers, snapshot_path, snapshot):
     data_paths = save_data(parsers, snapshot)
 
     dic_snap = MessageToDict(snapshot, including_default_value_fields=True, preserving_proto_field_name=True)
-    # print(dic_snap.keys())
-    # print(type(dic_snap["color_image"]["data"]))
-    # print(type(dic_snap["depth_image"]["data"]))
-
+    # replace data attr with data_path
     for parser, data_path in data_paths.items():
         if parser in dic_snap:
             del dic_snap[parser]["data"]
-            dic_snap[parser]["data_path"] = dic_snap[parser]
+            dic_snap[parser]["data_path"] = str(data_paths[parser])
 
     # add snapshot path (will be used to relate between the user and its snapshots)
     dic_snap["snapshot_path"] = snapshot_path if snapshot_path else ""
-    print("ds:", dic_snap)
-    print(type(dic_snap))
-    some = ParseDict(dic_snap, create_empty_snapshot(), ignore_unknown_fields=True)
-    print(some)
-    # new_snap_dic = copy.deepcopy(dic_snap)
-    return some
+    # print("ds:", dic_snap)
 
+    # ParseDict function raises error in Rabbitmq because it can't recognize protobuf descriptors
+    # serial_dic = ParseDict(dic_snap, create_empty_snapshot(), ignore_unknown_fields=True)
+    # so we have to copy data to a new dicionary
+    new_snap_dic = copy.deepcopy(dic_snap)
+    return json.dumps(new_snap_dic)
 
-'''
-We are planing to distinguish between the clients by user_id
-'''
 
 
 class FlaskInit:
@@ -98,7 +82,6 @@ class FlaskInit:
             if self.msg_broker is None:
                 self.msg_broker = find_msg_broker(self.msg_queue_url)
                 self.msg_broker.declare_exchange()
-            # self.msg_broker.publish(json.dumps(data))
             self.msg_broker.publish(data, props)
                 # with find_msg_broker(self.msg_queue_url) as msq:
                 #     msq.exchange_declare()
@@ -132,18 +115,24 @@ class FlaskInit:
 
             @app.route('/snapshot/<int:user_id>/<int:snapshot_id>', methods=['POST'])
             def add_snapshot(user_id, snapshot_id):
-                print("from snap", self.publish, self.msg_queue_url)
-                print(user_id)
 
                 snapshot_path = Path("users") / str(user_id) / "snapshots" / str(snapshot_id)
                 Path(snapshot_path).mkdir(parents=True, exist_ok=True)
                 snap_file = request.files["file"].filename
                 with open(snap_file, "rb") as f:
                     snap = parse_from(f.read())
-                    snap_dic = snapshot_to_dict(self.parsers, snapshot_path, snap)  # TODO: it's not json yet!!!!!!!!!!
-                    print("new snap", type(snap_dic), snap_dic)
-                    props = {"arguments": {"user_id": user_id, "snapshot_id": snapshot_id}, "content-type": "application/protobuf"}
-                if not self.setup_publisher(snap_dic, props):
+                    snap_serial_dic = snapshot_to_dict(self.parsers, str(snapshot_path), snap)  # TODO: it's not json yet!!!!!!!!!!
+                    # print("new snap", type(snap_serial_dic), snap_serial_dic)
+
+                    # use properties? or simply add path to the snapshot?
+                    # props = {"arguments": {"user_id": user_id, "snapshot_id": snapshot_id}, "content-type": "application/protobuf"}
+                    # props = {"content-type": "application/protobuf"}
+                if not self.setup_publisher(
+                        snap_serial_dic,
+                        BasicProperties(
+                            headers={"snapshot_id": snapshot_id, "user_id": user_id},
+                            message_id="snap_"+str(snapshot_id)+"_"+str(user_id))
+                ):
                     data = {"error": "no publisher and no message queue url were supplied."}
                     # headers = {"Content-Type": "application/json"}
                     return data
