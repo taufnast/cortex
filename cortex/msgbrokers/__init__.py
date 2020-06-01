@@ -1,8 +1,8 @@
 from .rabbitmq import RabbitMQ
 
-# it was preferable to create a local dict of msgq classes as ther is only one
+# it was preferable to create a local dict of msgqueue classes as there is only one
 # but it can be updated easily
-# on some point we may want to create a config yaml file containing all the msgqs
+# on some point we may want to create a config yaml file containing all the msgqueue
 msg_brokers = {"rabbitmq": RabbitMQ}
 
 

@@ -1,8 +1,8 @@
 import pika
 
 
-def callback(method, properties, body):
-    print(" [x] %r:%r _ %r" % (method.routing_key, body, properties))
+def callback(ch, method, properties, body):
+    print(" [x] %r _ %r" % (body, properties))
 
 
 class RabbitMQ:
@@ -30,19 +30,12 @@ class RabbitMQ:
         result = self.channel.queue_declare(queue='', exclusive=True, durable=True)
         queue_name = result.method.queue
         self.channel.queue_bind(exchange=self.exchange, queue=queue_name)
-
         print(' [*] Waiting for logs. To exit press CTRL+C')
         return queue_name
 
     def publish(self, msg, props=None):
         self.channel.basic_publish(exchange='snapshot', routing_key='', body=msg, properties=props)
-        if "snapshot_path" in msg:
-            out = msg["snapshot_path"]
-        elif "user_id" in msg:
-            out = msg["user_id"]
-        else:  # unexpected format ?
-            out = msg
-        print(" [x] Sent %r" % out)
+        # print(" [x] Sent %r" % msg)
 
     def consume(self, queue_name, callback=callback):
         self.channel.basic_consume(
